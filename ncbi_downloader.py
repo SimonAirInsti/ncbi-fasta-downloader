@@ -1762,7 +1762,9 @@ def main():
                 integrator = DataIntegrator(str(downloader.output_dir))
                 
                 downloader.logger.info("Processing CSV files...")
-                csv_files = integrator.identify_csv_files(exclude_patterns=["proteome", "unified"])
+                csv_files = integrator.identify_csv_files(exclude_patterns=["proteome", "unified"],
+                    target_proteins=args.target_proteins  # Pass the target proteins
+                    )
                 csv_df = integrator.read_and_concatenate_csv_files(csv_files)
                 
                 downloader.logger.info("Processing FASTA files...")

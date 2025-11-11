@@ -51,13 +51,14 @@ class DataIntegrator:
             raise FileNotFoundError(f"Output directory not found: {self.output_dir}")
         
         self.logger.info(f"DataIntegrator initialized with output directory: {self.output_dir}")
-    
-    def identify_csv_files(self, exclude_patterns: List[str] = None) -> List[Path]:
+
+    def identify_csv_files(self, exclude_patterns: List[str] = None, target_proteins: List[str] = None) -> List[Path]:
         """
         Identify CSV files in the output directory, excluding specific patterns.
         
         Args:
             exclude_patterns (List[str]): Patterns to exclude (default: ["proteome"])
+            target_proteins (List[str]): If provided, only include CSV files matching these protein names
             
         Returns:
             List[Path]: List of CSV file paths
@@ -67,17 +68,47 @@ class DataIntegrator:
         
         csv_files = []
         
+        # Normalize target proteins for matching (if provided)
+        normalized_target_proteins = None
+        if target_proteins:
+            # Convert to lowercase and replace spaces with underscores for filename matching
+            normalized_target_proteins = [
+                protein.lower().replace(' ', '_') 
+                for protein in target_proteins
+            ]
+            self.logger.info(f"Filtering CSV files for target proteins: {target_proteins}")
+        
         # Find all CSV files
         for csv_file in self.output_dir.glob("*.csv"):
-            # Check if file should be excluded
+            # Check if file should be excluded by pattern
             should_exclude = False
             for pattern in exclude_patterns:
                 if pattern.lower() in csv_file.name.lower():
                     should_exclude = True
-                    self.logger.info(f"Excluding CSV file: {csv_file.name} (matches pattern: {pattern})")
+                    self.logger.info(f"Excluding CSV file: {csv_file.name} (matches exclude pattern: {pattern})")
                     break
             
-            if not should_exclude:
+            if should_exclude:
+                continue
+            
+            # If target_proteins is specified, only include matching files
+            if normalized_target_proteins:
+                filename_lower = csv_file.name.lower()
+                
+                # Check if any target protein name is in the filename
+                matches_target = False
+                for target_protein in normalized_target_proteins:
+                    if target_protein in filename_lower:
+                        matches_target = True
+                        self.logger.info(f"Found CSV file: {csv_file.name} (matches target: {target_protein})")
+                        break
+                
+                if matches_target:
+                    csv_files.append(csv_file)
+                else:
+                    self.logger.info(f"Skipping CSV file: {csv_file.name} (doesn't match target proteins)")
+            else:
+                # No target filter - include all non-excluded files
                 csv_files.append(csv_file)
                 self.logger.info(f"Found CSV file: {csv_file.name}")
         
