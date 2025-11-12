@@ -117,21 +117,21 @@ class DataIntegrator:
     
     def identify_fasta_files(self, exclude_patterns: List[str] = None) -> List[Path]:
         """
-        Identify FASTA files in the output directory.
+        Identify FASTA and GenBank files in the output directory.
         
         Args:
             exclude_patterns (List[str]): Patterns to exclude from filename matching
         
         Returns:
-            List[Path]: List of FASTA file paths
+            List[Path]: List of FASTA/GenBank file paths
         """
         if exclude_patterns is None:
             exclude_patterns = ["unified"]
             
         fasta_files = []
         
-        # Common FASTA extensions
-        fasta_extensions = ["*.fasta", "*.fa", "*.fas", "*.fna", "*.ffn", "*.faa", "*.frn"]
+        # Common FASTA and GenBank extensions
+        fasta_extensions = ["*.fasta", "*.fa", "*.fas", "*.fna", "*.ffn", "*.faa", "*.frn", "*.gb", "*.gbk", "*.genbank"]
         
         for extension in fasta_extensions:
             for fasta_file in self.output_dir.glob(extension):
@@ -342,12 +342,13 @@ class DataIntegrator:
         except Exception as e:
             self.logger.error(f"Error saving analysis report: {e}")
     
-    def parse_fasta_files(self, fasta_files: List[Path]) -> pd.DataFrame:
+    def parse_fasta_files(self, fasta_files: List[Path], target_proteins: List[str] = None) -> pd.DataFrame:
         """
         Parse FASTA files and convert to DataFrame format with enhanced metadata extraction.
         
         Args:
             fasta_files (List[Path]): List of FASTA file paths
+            target_proteins (List[str]): If provided, only include sequences matching these protein types
             
         Returns:
             pd.DataFrame: DataFrame with FASTA sequence data and extracted metadata
@@ -356,43 +357,86 @@ class DataIntegrator:
             self.logger.warning("No FASTA files provided for parsing")
             return pd.DataFrame()
         
+        # Normalize target proteins for filtering (if provided)
+        normalized_target_proteins = None
+        if target_proteins:
+            normalized_target_proteins = [protein.lower() for protein in target_proteins]
+            self.logger.info(f"Filtering FASTA sequences for target proteins: {target_proteins}")
+        
         all_sequences = []
         
         for fasta_file in fasta_files:
             try:
-                self.logger.info(f"Parsing FASTA file: {fasta_file.name}")
+                # Detect file format based on extension
+                file_format = "fasta"
+                if fasta_file.suffix.lower() in ['.gb', '.gbk', '.genbank']:
+                    file_format = "genbank"
+                    self.logger.info(f"Parsing GenBank file: {fasta_file.name}")
+                else:
+                    self.logger.info(f"Parsing FASTA file: {fasta_file.name}")
                 
                 # Handle compressed files
                 if fasta_file.suffix == '.gz':
                     import gzip
                     opener = gzip.open
                     mode = 'rt'
+                    # Check the actual extension before .gz
+                    actual_suffix = fasta_file.stem.split('.')[-1].lower()
+                    if actual_suffix in ['gb', 'gbk', 'genbank']:
+                        file_format = "genbank"
                 else:
                     opener = open
                     mode = 'r'
                 
                 sequences_count = 0
+                filtered_count = 0
                 
                 with opener(fasta_file, mode) as handle:
-                    for record in SeqIO.parse(handle, "fasta"):
-                        # Basic FASTA data
+                    for record in SeqIO.parse(handle, file_format):
+                        # Basic sequence data
                         sequence_data = {
                             'ID': record.id,
                             'Sequence': str(record.seq),
                             'Description': record.description,
                             'Sequence_Length': len(record.seq),
                             'Source_File': fasta_file.name,
-                            'Data_Source': 'NCBI'
+                            'Data_Source': 'NCBI',
+                            'File_Format': file_format
                         }
                         
-                        # Extract enhanced metadata using the same methods as ncbi_downloader
-                        enhanced_metadata = self._extract_enhanced_metadata_from_fasta(record.description, str(record.seq))
+                        # For GenBank files, extract additional metadata from annotations
+                        if file_format == "genbank":
+                            enhanced_metadata = self._extract_enhanced_metadata_from_genbank(record)
+                        else:
+                            # For FASTA, extract from description
+                            enhanced_metadata = self._extract_enhanced_metadata_from_fasta(record.description, str(record.seq))
+                        
                         sequence_data.update(enhanced_metadata)
                         
-                        all_sequences.append(sequence_data)
-                        sequences_count += 1
+                        # Filter by target proteins if specified
+                        if normalized_target_proteins:
+                            protein_type = sequence_data.get('Protein type', '').lower()
+                            
+                            # Check if protein type matches any target protein
+                            matches_target = any(
+                                target in protein_type or protein_type in target
+                                for target in normalized_target_proteins
+                            )
+                            
+                            if matches_target:
+                                all_sequences.append(sequence_data)
+                                sequences_count += 1
+                            else:
+                                filtered_count += 1
+                        else:
+                            # No filter - include all sequences
+                            all_sequences.append(sequence_data)
+                            sequences_count += 1
                 
-                self.logger.info(f"Parsed {sequences_count} sequences from {fasta_file.name}")
+                if filtered_count > 0:
+                    self.logger.info(f"Parsed {sequences_count} sequences from {fasta_file.name} (filtered out {filtered_count} non-matching sequences)")
+                else:
+                    self.logger.info(f"Parsed {sequences_count} sequences from {fasta_file.name}")
                 
             except Exception as e:
                 self.logger.error(f"Error parsing FASTA file {fasta_file.name}: {e}")
@@ -507,6 +551,87 @@ class DataIntegrator:
         except Exception as e:
             self.logger.warning(f"Error extracting metadata from FASTA description: {e}")
             self.logger.debug(f"Problematic description: {description}")
+        
+        return metadata
+    
+    def _extract_enhanced_metadata_from_genbank(self, record) -> Dict:
+        """
+        Extract enhanced metadata from GenBank SeqRecord.
+        This function extracts: Prot ID, Protein type, Organism, and Variants from GenBank annotations.
+        
+        Args:
+            record (SeqRecord): BioPython SeqRecord from GenBank file
+            
+        Returns:
+            Dict: Extracted metadata with UniProt-compatible column names
+        """
+        metadata = {
+            'Prot ID': None,
+            'Protein type': None,
+            'Organism': None,
+            'Variants': None
+        }
+        
+        try:
+            # Extract Protein ID from record
+            metadata['Prot ID'] = record.id if record.id else record.name
+            
+            # Extract Organism from annotations
+            if 'organism' in record.annotations:
+                metadata['Organism'] = record.annotations['organism']
+            elif 'source' in record.annotations:
+                metadata['Organism'] = record.annotations['source']
+            
+            # Extract protein type from custom annotation (added during download)
+            if 'protein_type' in record.annotations:
+                metadata['Protein type'] = record.annotations['protein_type']
+            else:
+                # Try to extract from features (CDS or Protein features)
+                for feature in record.features:
+                    if feature.type in ['CDS', 'Protein', 'gene']:
+                        if 'product' in feature.qualifiers:
+                            product = feature.qualifiers['product'][0]
+                            metadata['Protein type'] = product
+                            break
+                        elif 'protein_id' in feature.qualifiers:
+                            # Fallback: try to infer from description
+                            if record.description:
+                                protein_keywords = {
+                                    'neuraminidase': 'Neuraminidase',
+                                    'hemagglutinin': 'Hemagglutinin',
+                                    'matrix protein 1': 'Matrix protein 1',
+                                    'matrix protein 2': 'Matrix protein 2',
+                                    'nucleoprotein': 'Nucleoprotein'
+                                }
+                                desc_lower = record.description.lower()
+                                for keyword, protein_type in protein_keywords.items():
+                                    if keyword in desc_lower:
+                                        metadata['Protein type'] = protein_type
+                                        break
+            
+            # Extract Variants (strain information)
+            if metadata['Organism']:
+                # Try to extract variant from organism name
+                variant_pattern = re.compile(r'Influenza A virus \((.*?)\)')
+                variant_match = variant_pattern.search(metadata['Organism'])
+                if variant_match:
+                    metadata['Variants'] = variant_match.group(1)
+                else:
+                    # Try to get strain from features
+                    for feature in record.features:
+                        if feature.type == 'source':
+                            if 'strain' in feature.qualifiers:
+                                metadata['Variants'] = feature.qualifiers['strain'][0]
+                                break
+                            elif 'isolate' in feature.qualifiers:
+                                metadata['Variants'] = feature.qualifiers['isolate'][0]
+                                break
+            
+            self.logger.debug(f"Extracted GenBank metadata for '{record.id}': {metadata}")
+            
+        except Exception as e:
+            self.logger.warning(f"Error extracting metadata from GenBank record: {e}")
+            self.logger.debug(f"Problematic record ID: {record.id if hasattr(record, 'id') else 'Unknown'}")
         
         return metadata
     

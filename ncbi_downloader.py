@@ -636,8 +636,19 @@ class NCBIDownloaderV2:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
         
-        # Setup logging
+        # Setup logging FIRST (before using self.logger)
         self._setup_logging()
+        
+        # Initialize logger
+        self.logger = logging.getLogger(__name__)
+        
+        # Log the configured output format
+        rettype = self.config.get('ncbi.rettype', 'fasta')
+        self.logger.info(f"Configured output format: {rettype.upper()}")
+        if rettype in ['gb', 'genbank', 'gp']:
+            self.logger.info("GenBank format selected - will download full GenBank records with annotations")
+        else:
+            self.logger.info("FASTA format selected - will download sequences only")
         
         # Set Entrez configuration
         Entrez.email = self.email
@@ -649,7 +660,6 @@ class NCBIDownloaderV2:
             max_workers=self.config.get('uniprot.max_workers', 35)
         )
         
-        self.logger = logging.getLogger(__name__)
         self.logger.info(f"Downloader initialized with batch_size={self.batch_size}, workers={self.max_workers}")
         
     def _setup_logging(self):
@@ -1054,7 +1064,12 @@ class NCBIDownloaderV2:
                     
                 # Parse and process sequences
                 if response.strip():
-                    sequences = self._parse_fasta_batch_enhanced(response, protein_type)
+                    # Choose parser based on rettype configuration
+                    rettype = self.config.get('ncbi.rettype', 'fasta')
+                    if rettype in ['gb', 'genbank', 'gp']:
+                        sequences = self._parse_genbank_batch_enhanced(response, protein_type)
+                    else:
+                        sequences = self._parse_fasta_batch_enhanced(response, protein_type)
                     
                     # Filter duplicates if enabled
                     if self.duplicate_detection:
@@ -1143,6 +1158,49 @@ class NCBIDownloaderV2:
             enhanced_sequence = enhanced_header + '\n' + '\n'.join(current_sequence)
             acc_id = current_header.split()[0][1:]
             sequences.append((acc_id, enhanced_sequence))
+            
+        return sequences
+    
+    def _parse_genbank_batch_enhanced(self, genbank_text: str, protein_type: str) -> List[Tuple[str, str]]:
+        """
+        Enhanced GenBank parsing with validation and metadata extraction.
+        
+        Args:
+            genbank_text (str): GenBank format text
+            protein_type (str): Type of protein being processed
+            
+        Returns:
+            List[Tuple[str, str]]: List of (accession_id, genbank_record) tuples
+        """
+        sequences = []
+        
+        try:
+            # Use BioPython's SeqIO to parse GenBank format
+            from io import StringIO
+            genbank_io = StringIO(genbank_text)
+            
+            for record in SeqIO.parse(genbank_io, "genbank"):
+                # Get accession ID
+                acc_id = record.id
+                if not acc_id and record.name:
+                    acc_id = record.name
+                
+                # Add custom annotations for tracking
+                record.annotations['protein_type'] = protein_type
+                record.annotations['downloaded'] = datetime.now().isoformat()
+                
+                # Convert record back to GenBank format string
+                output_io = StringIO()
+                SeqIO.write(record, output_io, "genbank")
+                genbank_data = output_io.getvalue()
+                
+                sequences.append((acc_id, genbank_data))
+                
+                self.logger.debug(f"Parsed GenBank record: {acc_id} ({len(record.seq)} bp)")
+                
+        except Exception as e:
+            self.logger.error(f"Error parsing GenBank batch: {e}")
+            self.logger.debug(f"Problematic GenBank text (first 500 chars): {genbank_text[:500]}")
             
         return sequences
         
@@ -1769,7 +1827,7 @@ def main():
                 
                 downloader.logger.info("Processing FASTA files...")
                 fasta_files = integrator.identify_fasta_files(exclude_patterns=["unified"])
-                fasta_df = integrator.parse_fasta_files(fasta_files)
+                fasta_df = integrator.parse_fasta_files(fasta_files, target_proteins=args.target_proteins)
                 
                 if not csv_df.empty or not fasta_df.empty:
                     downloader.logger.info("Combining and processing data...")
