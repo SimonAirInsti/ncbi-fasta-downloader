@@ -1,0 +1,24 @@
+{
+  "email": "marinoperea98@usal.es",
+  "batch_size": 200,
+  "max_workers": 4,
+  "rate_limit_delay": 0.34,
+  "max_retries": 3,
+  "retry_delay": 2,
+  "save_interval": 300,
+  "log_level": "INFO",
+  "output_dir": "output",
+  "files": {
+    "input_file": "ncbi_ids_dict.tsv",
+    "output_file": "polimery_sequences.gb",
+    "progress_file": "progress_p2.json",
+    "failed_ids_file": "failed_ids.txt",
+    "log_file": "ncbi_download.log"
+  },
+  "ncbi": {
+    "database": "protein",
+    "rettype": "gb",
+    "retmode": "text",
+    "api_base": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+  }
+}
