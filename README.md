@@ -76,7 +76,7 @@ Matrix protein 1	164584001,164584002,164584003
 ### Dynamic ID Generation (New!)
 ```bash
 # Generate NCBI IDs and download sequences in one command
-python ncbi_downloader.py --generate-ids --virus "Influenza A virus" --proteins "Neuraminidase,Hemagglutinin" --max-results-per-protein 500
+python ncbi_downloader.py --generate-ids --virus "Influenza A virus" --target-proteins "Neuraminidase,Hemagglutinin" --max-results-per-protein 500
 
 # Generate IDs file only for later use
 python ncbi_downloader.py --generate-ids --virus "Influenza A virus" --proteins "Neuraminidase,Hemagglutinin" --ids-only

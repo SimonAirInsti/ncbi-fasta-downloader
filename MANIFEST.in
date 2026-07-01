@@ -1,0 +1,27 @@
+# Include the license and documentation
+include LICENSE
+include README.md
+include requirements.txt
+include config_example.json
+include ejemplos_influenza.md
+
+# Include example configs (but NOT the user's personal config.json)
+recursive-include examples *.py *.json *.md
+
+# Include package data
+recursive-include ncbi_downloader_pkg *.py
+
+# Exclude dev/test files from sdist
+exclude test_*.py
+exclude check_progress.py
+exclude publish_github.py
+exclude in_db_maker.py
+exclude setup.py
+
+# Exclude directories
+prune .git
+prune __pycache__
+prune *.egg-info
+prune output
+prune .venv
+prune venv

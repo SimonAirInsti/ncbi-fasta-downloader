@@ -316,4 +316,12 @@ def main():
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
-    main()
+    # Only run the interactive project setup when explicitly requested by the user.
+    # Build tools create isolated environments and may execute this file; avoid
+    # running interactive checks during those automated builds. To run the
+    # interactive setup, call this script with the `--interactive` flag:
+    #
+    #   python setup.py --interactive
+    #
+    if "--interactive" in sys.argv:
+        main()
